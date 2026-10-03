@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <M5Unified.h>
+#include "web_monitor.h"
 
 namespace {
 constexpr uint8_t kClockPin = 5;  // Yellow
@@ -20,6 +21,7 @@ uint32_t lastStatusMs = 0;
 bool firstSample = true;
 M5Canvas controllerCanvas(&M5.Display);
 bool canvasReady = false;
+bool webReady = false;
 
 uint16_t readController() {
   uint16_t pressed = 0;
@@ -52,7 +54,7 @@ void drawButtons(uint16_t pressed) {
   lcd.fillScreen(TFT_BLACK);
   lcd.setTextSize(1);
   lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-  lcd.drawCenterString("SNES CONTROLLER", 120, 3);
+  lcd.drawCenterString(webReady ? "SNES-Monitor  192.168.4.1" : "SNES / Wi-Fi unavailable", 120, 3);
 
   const auto buttonColor = [pressed](uint8_t bit) -> uint16_t {
     return (pressed & (1U << bit)) ? TFT_GREEN : TFT_DARKGREY;
@@ -163,10 +165,14 @@ void setup() {
   controllerCanvas.setColorDepth(16);
   canvasReady = controllerCanvas.createSprite(M5.Display.width(), M5.Display.height()) != nullptr;
   controllerCanvas.setFont(&fonts::Font0);
-  drawButtons(0);
+  delay(20);  // Allow controller power and logic to settle.
+  previousButtons = readController();
+  webReady = WebMonitor::begin(previousButtons);
+  drawButtons(previousButtons);
   Serial.println("\nSNES controller monitor / 3.3V");
   Serial.println("CLOCK=GPIO5 LATCH=GPIO6 DATA=GPIO7, serial=115200");
-  delay(20);  // Allow controller power and logic to settle.
+  Serial.println(webReady ? "Wi-Fi: SNES-Monitor / http://192.168.4.1/ (max 2 devices)"
+                          : "Wi-Fi / web monitor initialization failed");
 }
 
 void loop() {
@@ -176,6 +182,7 @@ void loop() {
     lastPollMs = now;
     const uint16_t pressed = readController();
     if (firstSample || pressed != previousButtons) {
+      WebMonitor::publish(pressed);
       drawButtons(pressed);
       printChanges(previousButtons, pressed);
       printStatus(pressed);

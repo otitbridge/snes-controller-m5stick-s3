@@ -1,6 +1,6 @@
 # SNES Controller Monitor for M5StickS3
 
-有線SNES／スーパーファミコンコントローラーをM5StickS3に接続し、12ボタンの状態を内蔵液晶とUSBシリアルに表示するファームウェアです。PlatformIOで開発・ビルドできます。
+有線SNES／スーパーファミコンコントローラーをM5StickS3に接続し、12ボタンの状態を内蔵液晶、USBシリアル、Webブラウザーに表示するファームウェアです。PlatformIOで開発・ビルドできます。
 
 コントローラーの入力確認や、SNESのシリアル通信を使った電子工作の作例として利用できます。
 
@@ -13,6 +13,8 @@
 - 約10ms間隔で入力を読み取り、状態が変わったときに表示を更新
 - シリアルには状態変更時に加え、約2秒ごとに現在の状態を出力
 - シリアルモニターを開かなくても液晶表示が動作
+- M5StickS3がWi-Fi親機として動作し、最大2台の端末からWebモニターに接続
+- WebSocketでボタンの変化を送信。接続時の状態同期、切断表示、自動再接続に対応
 
 このファームウェアの用途は入力の表示です。USB／BluetoothゲームパッドとしてPCに入力を送る機能はありません。
 
@@ -68,7 +70,21 @@ pio device monitor -b 115200
         ↓                              B
 ```
 
-押していないボタンは灰色、押しているボタンは緑色になります。下部には`NO BUTTON PRESSED`または`GREEN = PRESSED`を表示します。
+押していないボタンは灰色、押しているボタンは緑色になります。上部にWi-Fi名とアクセス先、下部に`NO BUTTON PRESSED`または`GREEN = PRESSED`を表示します。Wi-Fiの初期化に失敗した場合も液晶とシリアルの表示は継続します。
+
+## Webモニター
+
+1. スマートフォンやPCをWi-Fi **`SNES-Monitor`** に接続します。パスワードは **`12345678`** です。
+2. ブラウザーで **`http://192.168.4.1/`** を開きます。
+3. 「接続済み」と表示されたら、コントローラーを操作します。液晶と同じボタン配置で押下状態を表示します。
+
+Wi-Fiの同時接続は最大2台、WebSocket接続も最大2画面です。各端末で1画面ずつ開いてください。画面上のボタンは表示専用です。
+
+インターネット接続は不要です。端末に「インターネット接続なし」と表示されても、このWi-Fiへの接続を維持してください。HTTPSではなくHTTPでアクセスします。
+
+切断時は押下表示を消して状態不明と表示し、自動再接続します。再接続時には全ボタンの現在状態を同期します。状態変更時の送信に加え、1秒ごとに現在状態を送信し、約5秒間受信できない場合は再接続を試みます。
+
+入力読み取りと液晶表示は通信処理とは別のタスクで実行します。通信が滞った場合に送信待ちが無制限に増えないよう、保留状態は最大64件とし、上限に達すると古いものから破棄します。通信混雑時の短い操作はWeb側で取りこぼす場合があります。
 
 ## シリアル出力
 
@@ -92,18 +108,23 @@ pio device monitor -b 115200
 | ファイル | 内容 |
 | --- | --- |
 | `src/main.cpp` | コントローラー読み取り、液晶描画、シリアル出力 |
+| `src/web_monitor.cpp` / `src/web_monitor.h` | Wi-Fi親機、HTTP配信、WebSocketによる状態送信 |
+| `src/web_page.h` | 外部通信不要のWebモニター画面 |
 | `platformio.ini` | ボード、Arduinoフレームワーク、依存ライブラリの設定 |
 | `.gitignore` | ビルド生成物などのGit管理対象からの除外 |
 
 GPIOを変更する場合は、`src/main.cpp`の`kClockPin`、`kLatchPin`、`kDataPin`を変更してください。
 
-依存ライブラリはM5UnifiedとM5PM1です。現在の`platformio.ini`はGitHub URLで取得する構成で、コミットやタグを固定していないため、取得時期によってライブラリのバージョンが変わる可能性があります。
+Wi-Fi名とパスワードは`src/web_monitor.h`で設定できます。
+
+依存ライブラリはM5Unified、M5PM1、WebSockets（2.7.2）です。M5UnifiedとM5PM1はGitHub URLで取得する構成で、コミットやタグを固定していないため、取得時期によってライブラリのバージョンが変わる可能性があります。
 
 ## 動作確認状況・制限
 
 - M5StickS3向けのPlatformIOビルドと、USB経由の書き込みを確認済み
 - 開発時の3.3V配線で、初期の入力表示について動作確認の報告あり
 - 使用コントローラーの型番や、複数モデルでの互換性確認は未記録
+- Webモニターの2台同時接続、実際の応答時間は実機での確認が必要
 - 未接続と「どのボタンも押されていない状態」は区別しません。未接続時にも`NONE`と表示される場合があります
 
 ## 参考資料
@@ -113,3 +134,4 @@ GPIOを変更する場合は、`src/main.cpp`の`kClockPin`、`kLatchPin`、`kDa
 - [Espressif：ESP32-S3データシート](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf)
 - [M5Unified](https://github.com/m5stack/M5Unified)
 - [M5PM1](https://github.com/m5stack/M5PM1)
+- [arduinoWebSockets](https://github.com/Links2004/arduinoWebSockets)
