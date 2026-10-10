@@ -37,6 +37,26 @@
 
 USB接続の互換コントローラーや、スーパーファミコンミニ用コントローラーは、この配線・通信方式の対象ではありません。
 
+## 機器構成図
+
+M5StickS3に有線コントローラーを接続し、スマートフォンやPCはM5StickS3のWi-Fiに直接接続します。無線ルーターやインターネット接続は不要です。
+
+```mermaid
+flowchart LR
+    Controller["SNES / スーパーファミコン<br/>有線コントローラー"]
+    Stick["M5StickS3<br/>内蔵液晶・Wi-Fi親機<br/>192.168.4.1"]
+    Browser["スマートフォン / PC<br/>ブラウザー・最大2台"]
+    DevPC["開発用PC<br/>PlatformIO / シリアルモニター"]
+
+    Stick -->|"白：3.3V / 黄：CLOCK / 橙：LATCH"| Controller
+    Controller -->|"赤：DATA"| Stick
+    Stick ---|"茶：共通GND"| Controller
+    Stick <-->|"Wi-Fi：SNES-Monitor"| Browser
+    DevPC <-->|"USB：書き込み・シリアル出力"| Stick
+```
+
+USBはファームウェアの書き込みとシリアルモニターの利用に必要です。液晶・Web表示・ゲームの利用時は、本体のバッテリーでも動作します。線色は以下の配線表と同じ作例のものです。
+
 ## 配線（3.3V給電）
 
 M5StickS3上部のHat2-Busを使用します。電源を切った状態で、本体の端子表記を確認して配線してください。
@@ -56,6 +76,41 @@ GPIO番号はコネクタの物理的なピン番号とは異なります。互�
 SNESコントローラーの本来の電源は5Vです。このプロジェクトでは3.3Vで給電しますが、すべての純正品・互換品での動作を保証するものではありません。ファームウェアは初期化時に3.3V LDO出力を有効にします。
 
 **M5StickS3のGPIOに5V信号を直接入力しないでください。** コントローラーを5Vで動作させる場合は、CLOCK／LATCHを3.3V→5V、DATAを5V→3.3Vへ変換する適切なレベル変換回路が必要です。白線だけを5V端子へ変更して、DATAをGPIOへ直結する配線は避けてください。
+
+## 処理ブロック図
+
+入力読み取り・液晶表示と、Web通信は別のタスクで処理します。ゲームの描画・進行・効果音はアクセスした端末のブラウザーで実行します。
+
+```mermaid
+flowchart TD
+    Controller["SNESコントローラー"]
+    subgraph MCU["M5StickS3"]
+        Input["入力読み取り・表示タスク<br/>約10msごとに16ビット読み取り<br/>12ボタンの押下状態を取得"]
+        LCD["内蔵液晶<br/>押下ボタンを表示"]
+        Serial["USBシリアル出力<br/>押下・解放イベント / 現在状態"]
+        States["状態共有<br/>最新状態 + 送信待ちキュー（最大64件）"]
+        Network["Web通信タスク<br/>HTTP：80 / WebSocket：81"]
+        Input --> LCD
+        Input --> Serial
+        Input -->|"状態変化"| States
+        States --> Network
+    end
+    subgraph Client["端末のブラウザー"]
+        Page["HTML・JavaScript<br/>モニター / またはゲーム"]
+        Buttons["Webモニター<br/>押下状態を表示"]
+        Game["Coin Trail<br/>移動・ジャンプ・コイン獲得"]
+        Sound["端末のスピーカー<br/>コイン獲得の効果音"]
+        Page --> Buttons
+        Page --> Game
+        Game --> Sound
+    end
+    Controller -->|"DATA（GPIO7）"| Input
+    Input -->|"CLOCK（GPIO5）/ LATCH（GPIO6）"| Controller
+    Network -->|"HTTP：画面を配信"| Page
+    Network -->|"WebSocket：状態変化 + 1秒ごとの現在状態"| Page
+```
+
+各端末はモニターまたはゲームのどちらかを開き、合計2画面まで接続できます。ゲームの進行とコイン数は端末ごとに独立しています。
 
 ## ビルド・書き込み
 
@@ -142,12 +197,37 @@ PCでは矢印キー、Space / Z（ジャンプ）、Shift（ダッシュ）、E
 | `src/game_page.h` | 横スクロールゲーム、操作処理、コイン効果音 |
 | `platformio.ini` | ボード、Arduinoフレームワーク、依存ライブラリの設定 |
 | `.gitignore` | ビルド生成物などのGit管理対象からの除外 |
+| `LICENSE` | 本プロジェクトのMIT License |
 
 GPIOを変更する場合は、`src/main.cpp`の`kClockPin`、`kLatchPin`、`kDataPin`を変更してください。
 
 Wi-Fi名とパスワードは`src/web_monitor.h`で設定できます。
 
-依存ライブラリはM5Unified、M5PM1、WebSockets（2.7.2）です。M5UnifiedとM5PM1はGitHub URLで取得する構成で、コミットやタグを固定していないため、取得時期によってライブラリのバージョンが変わる可能性があります。
+直接指定する依存ライブラリは、動作確認済みの以下のバージョンに固定しています。
+
+| ライブラリ | 固定先 |
+| --- | --- |
+| M5Unified | `fd40d58b8405ad1e7ed7afab548dab5e7cec5bbb` |
+| M5PM1 | `be9a5456c007c333e7ac963f33bfde1ffa5d82ee` |
+| WebSockets | `2.7.2` |
+
+M5UnifiedとM5PM1はGitHubから指定コミットを取得します。これらが間接的に取得する依存ライブラリのすべてを固定する構成ではありません。
+
+## ライセンス
+
+本プロジェクトのソースコードおよび付属ドキュメントは[MIT License](LICENSE)で公開します。著作権表示は `Copyright (c) 2026 otitbridge` です。
+
+改変・再配布・商用利用を認め、本プロジェクトを利用した機器の製作・販売を含む商用利用を歓迎します。再配布するコードやドキュメントには著作権表示とライセンス文を保持してください。MIT Licenseは改変コードの公開を義務付けません。
+
+依存ライブラリには、それぞれのライセンスが適用されます。本プロジェクトのMIT Licenseによって変更されるものではありません。
+
+| 直接指定する依存ライブラリ | ライセンス |
+| --- | --- |
+| M5Unified | [MIT](https://github.com/m5stack/M5Unified/blob/fd40d58b8405ad1e7ed7afab548dab5e7cec5bbb/LICENSE) |
+| M5PM1 | [MIT](https://github.com/m5stack/M5PM1/blob/be9a5456c007c333e7ac963f33bfde1ffa5d82ee/LICENSE) |
+| WebSockets | [LGPL-2.1](https://github.com/Links2004/arduinoWebSockets/blob/2.7.2/LICENSE) |
+
+依存ライブラリを含むファームウェアや製品を配布する場合は、間接依存を含め各ライブラリのライセンス条件にも従ってください。M5StickS3やSNESコントローラーなど既存製品の設計・商標は、本プロジェクトのライセンス対象ではありません。
 
 ## 動作確認状況・制限
 
