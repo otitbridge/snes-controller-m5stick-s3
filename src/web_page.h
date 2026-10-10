@@ -27,7 +27,7 @@ footer{font-size:13px;color:#aeb9c9;line-height:1.8}code{color:#dbe8ff}
 </head>
 <body><main>
 <header><h1>SNES Controller Monitor</h1><span id="connection" role="status">接続中…</span></header>
-<p>M5StickS3 · 押しているボタンを緑色で表示します。</p>
+<p>M5StickS3 · 押しているボタンを緑色で表示します。 <a href="/game" style="color:#74f5ad">横スクロールゲームで遊ぶ →</a></p>
 <div class="panel disconnected" id="panel">
 <svg viewBox="0 15 240 105" role="img" aria-label="SNESコントローラーのボタン配置">
 <g data-bit="10" aria-label="L"><rect class="key" x="20" y="21" width="58" height="16" rx="5"/><text class="letter" x="49" y="29">L</text></g>

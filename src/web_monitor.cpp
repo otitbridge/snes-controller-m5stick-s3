@@ -1,5 +1,6 @@
 #include "web_monitor.h"
 #include "web_page.h"
+#include "game_page.h"
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <WiFi.h>
@@ -46,6 +47,10 @@ void networkTask(void*) {
     http.send_P(200, "text/html; charset=utf-8", kWebPage);
   });
   http.onNotFound([] { http.send(404, "text/plain", "Not found"); });
+  http.on("/game", HTTP_GET, [] {
+    http.sendHeader("Cache-Control", "no-store");
+    http.send_P(200, "text/html; charset=utf-8", kGamePage);
+  });
   sockets.onEvent([](uint8_t client, WStype_t type, uint8_t*, size_t) {
     if (type == WStype_CONNECTED) {
       sendState(snapshot(), client);
