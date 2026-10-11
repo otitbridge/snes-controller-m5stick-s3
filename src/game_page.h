@@ -27,7 +27,7 @@ const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
 const overlay=document.getElementById('overlay'),scoreLabel=document.getElementById('score');
 const playButton=document.getElementById('play'),connection=document.getElementById('connection');
 const W=960,H=480,LENGTH=9600,GROUND=394,STEP=1/60;
-const JUMP=(1<<0)|(1<<8),LEFT=1<<6,RIGHT=1<<7,RUN=1<<1;
+const JUMP=(1<<0)|(1<<8),LEFT=1<<6,RIGHT=1<<7,RUN=1<<1,START=1<<3;
 let player,platforms,coins,particles=[],score=0,lap=1,camera=0,checkpoint=60;
 let started=false,paused=false,remote=0,keyboard=0,jumpBuffer=0,coyote=0;
 let audio=null,muted=false,socket=null,retry=null,seq=null,received=0,connected=false;
@@ -50,10 +50,9 @@ function control(mask,isRemote){
   if(isRemote)remote=mask;else keyboard=mask;
   const after=remote|keyboard;
   if((after&JUMP)&&!(before&JUMP))jumpBuffer=.12;
-  if(started&&isRemote){
-    if((mask&8)&&!(before&8))paused=!paused;
-    if((mask&4)&&!(before&4))reset();
-  }
+  // USB Enter and Wi-Fi START share one rising edge while either is held.
+  if(started&&(after&START)&&!(before&START))paused=!paused;
+  if(started&&isRemote&&(mask&4)&&!(before&4))reset();
 }
 function unlockAudio(){
   try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
@@ -139,13 +138,18 @@ function frame(time){
 playButton.onclick=()=>{unlockAudio();if(!started){started=true;paused=false;}else paused=!paused;playButton.blur();};
 document.getElementById('reset').onclick=event=>{unlockAudio();reset();event.currentTarget.blur();};
 document.getElementById('sound').onclick=event=>{unlockAudio();muted=!muted;event.currentTarget.textContent='音：'+(muted?'OFF':'ON');event.currentTarget.setAttribute('aria-pressed',String(muted));event.currentTarget.blur();};
-const keyMap={ArrowLeft:LEFT,ArrowRight:RIGHT,Space:1,KeyZ:1,ShiftLeft:RUN,ShiftRight:RUN};
+const keyMap={ArrowLeft:LEFT,ArrowRight:RIGHT,Space:1,KeyZ:1,ShiftLeft:RUN,ShiftRight:RUN,Enter:START};
 const held=new Set();
 function syncKeys(){let mask=0;for(const key of held)mask|=keyMap[key]||0;control(mask,false);}
 window.addEventListener('keydown',event=>{
   if(event.target.closest('button,a,input'))return;
-  if(event.code in keyMap){event.preventDefault();held.add(event.code);syncKeys();}
-  if(event.code==='Enter'&&!event.repeat){event.preventDefault();unlockAudio();if(!started)started=true;else paused=!paused;}
+  if(!(event.code in keyMap))return;
+  event.preventDefault();
+  const startGame=event.code==='Enter'&&!event.repeat&&!started;
+  if(event.code==='Enter'&&!event.repeat)unlockAudio();
+  held.add(event.code);syncKeys();
+  // Sync first so the Enter that starts the game cannot also pause it.
+  if(startGame){started=true;paused=false;}
 });
 window.addEventListener('keyup',event=>{if(event.code in keyMap){event.preventDefault();held.delete(event.code);syncKeys();}});
 window.addEventListener('blur',()=>{held.clear();control(0,false);});

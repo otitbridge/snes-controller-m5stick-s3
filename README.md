@@ -135,6 +135,12 @@ pio run -t upload
 pio device monitor -b 115200
 ```
 
+ブラウザーゲームの入力処理は、Node.js環境で次の回帰テストを実行できます。USB EnterとWi-Fi STARTの到着順、長押し、キーボードのみの操作などを確認します。
+
+```bash
+node tests/game-input.test.mjs
+```
+
 ## 液晶表示
 
 横向きの画面に、コントローラーの形とボタンを表示します。
