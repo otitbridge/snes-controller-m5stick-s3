@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <M5Unified.h>
+#include <USB.h>
+#include <USBHIDKeyboard.h>
 #include "web_monitor.h"
 
 namespace {
@@ -9,6 +11,24 @@ constexpr uint8_t kDataPin = 7;   // Red; white = 3V3_L2, brown = GND
 constexpr uint32_t kPollIntervalMs = 10;
 constexpr uint32_t kHeartbeatMs = 2000;
 constexpr uint16_t kButtonMask = 0x0FFF;
+
+struct HidKeyMapping {
+  uint8_t buttonBit;
+  uint8_t key;
+};
+
+// mGBA defaults: arrows = D-pad, Z = B, X = A, Backspace = SELECT,
+// Enter = START. X/Y/L/R on the SNES controller remain unassigned.
+constexpr HidKeyMapping kHidKeyMappings[] = {
+    {0, 'z'},
+    {2, KEY_BACKSPACE},
+    {3, KEY_RETURN},
+    {4, KEY_UP_ARROW},
+    {5, KEY_DOWN_ARROW},
+    {6, KEY_LEFT_ARROW},
+    {7, KEY_RIGHT_ARROW},
+    {8, 'x'},
+};
 
 // SNES serial order. A low DATA bit means the button is pressed.
 constexpr const char* kButtonNames[] = {
@@ -22,6 +42,22 @@ bool firstSample = true;
 M5Canvas controllerCanvas(&M5.Display);
 bool canvasReady = false;
 bool webReady = false;
+USBHIDKeyboard usbKeyboard;
+
+void updateUsbKeyboard(uint16_t before, uint16_t after) {
+  const uint16_t changed = before ^ after;
+  for (const auto& mapping : kHidKeyMappings) {
+    const uint16_t mask = static_cast<uint16_t>(1U << mapping.buttonBit);
+    if ((changed & mask) == 0) {
+      continue;
+    }
+    if (after & mask) {
+      usbKeyboard.press(mapping.key);
+    } else {
+      usbKeyboard.release(mapping.key);
+    }
+  }
+}
 
 uint16_t readController() {
   uint16_t pressed = 0;
@@ -140,6 +176,9 @@ void printChanges(uint16_t before, uint16_t after) {
 }  // namespace
 
 void setup() {
+  usbKeyboard.begin();
+  USB.begin();
+
   auto config = M5.config();
   config.internal_imu = false;
   config.internal_rtc = false;
@@ -171,6 +210,7 @@ void setup() {
   drawButtons(previousButtons);
   Serial.println("\nSNES controller monitor / 3.3V");
   Serial.println("CLOCK=GPIO5 LATCH=GPIO6 DATA=GPIO7, serial=115200");
+  Serial.println("USB HID keyboard: arrows, B=Z, A=X, SELECT=Backspace, START=Enter");
   Serial.println(webReady ? "Wi-Fi: SNES-Monitor / http://192.168.4.1/ (max 2 devices)"
                           : "Wi-Fi / web monitor initialization failed");
 }
@@ -182,6 +222,7 @@ void loop() {
     lastPollMs = now;
     const uint16_t pressed = readController();
     if (firstSample || pressed != previousButtons) {
+      updateUsbKeyboard(firstSample ? 0 : previousButtons, pressed);
       WebMonitor::publish(pressed);
       drawButtons(pressed);
       printChanges(previousButtons, pressed);
