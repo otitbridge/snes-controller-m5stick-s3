@@ -4,8 +4,14 @@
 #include <USBHIDKeyboard.h>
 #include <atomic>
 #include <tusb.h>
-#include "usb_keyboard_state.h"
+#include <esp_system.h>
+#include "keyboard_state.h"
+#include "ble_keyboard.h"
 #include "web_monitor.h"
+
+#ifndef SNES_ENABLE_WEB_MONITOR
+#define SNES_ENABLE_WEB_MONITOR 1
+#endif
 
 namespace {
 constexpr uint8_t kClockPin = 5;  // Yellow
@@ -14,6 +20,8 @@ constexpr uint8_t kDataPin = 7;   // Red; white = 3V3_L2, brown = GND
 constexpr uint32_t kPollIntervalMs = 10;
 constexpr uint32_t kHeartbeatMs = 2000;
 constexpr uint16_t kButtonMask = 0x0FFF;
+constexpr uint32_t kPairingResetHoldMs = 3000;
+constexpr uint32_t kBatteryUpdateMs = 60000;
 
 // SNES serial order. A low DATA bit means the button is pressed.
 constexpr const char* kButtonNames[] = {
@@ -29,8 +37,12 @@ bool canvasReady = false;
 bool webReady = false;
 USBHIDKeyboard usbKeyboard;
 USBHID usbHid;
-UsbKeyboard::State usbKeyboardState;
+Keyboard::State usbKeyboardState;
 std::atomic<uint32_t> usbSession{0};
+BleKeyboard::Status previousBleStatus = BleKeyboard::Status::Unavailable;
+bool pairingResetHandled = false;
+uint32_t lastBatteryMs = 0;
+esp_reset_reason_t bootResetReason = ESP_RST_UNKNOWN;
 
 void onUsbEvent(void*, esp_event_base_t base, int32_t event, void*) {
   if (base == ARDUINO_USB_EVENTS &&
@@ -48,7 +60,7 @@ void updateUsbKeyboard(uint16_t pressed) {
   const uint32_t session = usbSession.load(std::memory_order_relaxed);
   const bool active = tud_mounted() && !tud_suspended();
   usbKeyboardState.update(pressed, session, active,
-      [](const UsbKeyboard::Report& report) {
+      [](const Keyboard::Report& report) {
         // A busy endpoint is retried on the next poll. Bound the transfer wait
         // to 5ms so an unresponsive host cannot stall input for 100ms per key.
         return usbHid.ready() && usbHid.SendReport(
@@ -87,7 +99,12 @@ void drawButtons(uint16_t pressed) {
   lcd.fillScreen(TFT_BLACK);
   lcd.setTextSize(1);
   lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-  lcd.drawCenterString(webReady ? "SNES-Monitor  192.168.4.1" : "SNES / Wi-Fi unavailable", 120, 3);
+  lcd.drawCenterString(BleKeyboard::statusText(previousBleStatus), 120, 2);
+#if SNES_ENABLE_WEB_MONITOR
+  lcd.drawCenterString(webReady ? "SNES-Monitor  192.168.4.1" : "Wi-Fi unavailable", 120, 11);
+#else
+  lcd.drawCenterString("Wi-Fi OFF / BLE only", 120, 11);
+#endif
 
   const auto buttonColor = [pressed](uint8_t bit) -> uint16_t {
     return (pressed & (1U << bit)) ? TFT_GREEN : TFT_DARKGREY;
@@ -187,6 +204,10 @@ void setup() {
   M5.Power.M5pm1.setLDOOutput(true);  // Enable the 3.3V supply.
 
   Serial.begin(115200);
+  bootResetReason = esp_reset_reason();
+  Serial.printf("BOOT: reset_reason=%d (panic=%d brownout=%d task_wdt=%d)\n",
+                static_cast<int>(bootResetReason), static_cast<int>(ESP_RST_PANIC),
+                static_cast<int>(ESP_RST_BROWNOUT), static_cast<int>(ESP_RST_TASK_WDT));
   // USB CDC may not yet be connected. Do not wait for it: LCD works alone.
   pinMode(kClockPin, OUTPUT);
   pinMode(kLatchPin, OUTPUT);
@@ -204,22 +225,44 @@ void setup() {
   controllerCanvas.setFont(&fonts::Font0);
   delay(20);  // Allow controller power and logic to settle.
   previousButtons = readController();
+#if SNES_ENABLE_WEB_MONITOR
   webReady = WebMonitor::begin(previousButtons);
+#endif
+  const bool bleReady = BleKeyboard::begin(M5.Power.getBatteryLevel());
+  previousBleStatus = BleKeyboard::status();
   drawButtons(previousButtons);
   Serial.println("\nSNES controller monitor / 3.3V");
   Serial.println("CLOCK=GPIO5 LATCH=GPIO6 DATA=GPIO7, serial=115200");
   Serial.println("USB HID keyboard: arrows, B=Z, A=X, X=S, Y=A, L=Q, R=W, SELECT=Backspace, START=Enter");
+  Serial.println(bleReady ? "BLE keyboard: SNES-Controller; hold BtnB for 3s to clear pairing"
+                         : "BLE keyboard initialization failed");
+#if SNES_ENABLE_WEB_MONITOR
   Serial.println(webReady ? "Wi-Fi: SNES-Monitor / http://192.168.4.1/ (max 2 devices)"
                           : "Wi-Fi / web monitor initialization failed");
+#else
+  Serial.println("Wi-Fi disabled (BLE-only profile)");
+#endif
 }
 
 void loop() {
   M5.update();
   const uint32_t now = millis();
+  if (!M5.BtnB.isPressed()) pairingResetHandled = false;
+  if (!pairingResetHandled && M5.BtnB.pressedFor(kPairingResetHoldMs)) {
+    BleKeyboard::forgetPairing();
+    pairingResetHandled = true;
+  }
   if (now - lastPollMs >= kPollIntervalMs) {
     lastPollMs = now;
     const uint16_t pressed = readController();
     updateUsbKeyboard(pressed);
+    BleKeyboard::update(pressed);
+    const BleKeyboard::Status bleStatus = BleKeyboard::status();
+    const bool bleChanged = bleStatus != previousBleStatus;
+    if (bleChanged) {
+      previousBleStatus = bleStatus;
+      Serial.println(BleKeyboard::statusText(bleStatus));
+    }
     if (firstSample || pressed != previousButtons) {
       WebMonitor::publish(pressed);
       drawButtons(pressed);
@@ -228,11 +271,21 @@ void loop() {
       previousButtons = pressed;
       firstSample = false;
       lastStatusMs = now;
+    } else if (bleChanged) {
+      drawButtons(pressed);
     }
+  }
+  if (now - lastBatteryMs >= kBatteryUpdateMs) {
+    BleKeyboard::setBatteryLevel(M5.Power.getBatteryLevel());
+    lastBatteryMs = now;
   }
   // Periodic status also makes the state visible when USB is opened later.
   if (now - lastStatusMs >= kHeartbeatMs) {
     printStatus(previousButtons);
+    Serial.printf("DIAG: reset_reason=%d heap=%u min_heap=%u %s\n",
+                  static_cast<int>(bootResetReason), ESP.getFreeHeap(),
+                  ESP.getMinFreeHeap(), BleKeyboard::statusText(BleKeyboard::status()));
+    BleKeyboard::printDiagnostics();
     lastStatusMs = now;
   }
   delay(1);

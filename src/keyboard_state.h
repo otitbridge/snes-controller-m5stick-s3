@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 
-namespace UsbKeyboard {
+namespace Keyboard {
 // Standard keyboard input report, without the separately supplied report ID.
 struct Report {
   uint8_t modifiers = 0;
@@ -31,7 +31,7 @@ inline Report makeReport(uint16_t buttons) {
 class State {
  public:
   // Called only by the input task. send returns true after a successful send.
-  // A new USB session (including resume) first gets a neutral report; the
+  // A new USB/BLE session (including resume) first gets a neutral report; the
   // following poll sends the latest input, even if no buttons have changed.
   template <typename Sender>
   void update(uint16_t buttons, uint32_t session, bool active, Sender send) {
@@ -62,4 +62,4 @@ class State {
   bool synchronized_ = false;
   Report sent_;
 };
-}  // namespace UsbKeyboard
+}  // namespace Keyboard

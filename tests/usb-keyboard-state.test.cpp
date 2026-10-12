@@ -1,12 +1,12 @@
-#include "../src/usb_keyboard_state.h"
+#include "../src/keyboard_state.h"
 #include <cassert>
 #include <cstdio>
 #include <vector>
 
-using UsbKeyboard::Report;
+using Keyboard::Report;
 
 struct Host {
-  UsbKeyboard::State state;
+  Keyboard::State state;
   uint16_t buttons = 0;
   uint32_t session = 1;
   bool active = true;
