@@ -18,9 +18,10 @@ struct HidKeyMapping {
 };
 
 // mGBA defaults: arrows = D-pad, Z = B, X = A, Backspace = SELECT,
-// Enter = START. X/Y/L/R on the SNES controller remain unassigned.
+// Enter = START. Map SNES X/Y/L/R to S/A/Q/W in the emulator settings.
 constexpr HidKeyMapping kHidKeyMappings[] = {
     {0, 'z'},
+    {1, 'a'},
     {2, KEY_BACKSPACE},
     {3, KEY_RETURN},
     {4, KEY_UP_ARROW},
@@ -28,6 +29,9 @@ constexpr HidKeyMapping kHidKeyMappings[] = {
     {6, KEY_LEFT_ARROW},
     {7, KEY_RIGHT_ARROW},
     {8, 'x'},
+    {9, 's'},
+    {10, 'q'},
+    {11, 'w'},
 };
 
 // SNES serial order. A low DATA bit means the button is pressed.
@@ -210,7 +214,7 @@ void setup() {
   drawButtons(previousButtons);
   Serial.println("\nSNES controller monitor / 3.3V");
   Serial.println("CLOCK=GPIO5 LATCH=GPIO6 DATA=GPIO7, serial=115200");
-  Serial.println("USB HID keyboard: arrows, B=Z, A=X, SELECT=Backspace, START=Enter");
+  Serial.println("USB HID keyboard: arrows, B=Z, A=X, X=S, Y=A, L=Q, R=W, SELECT=Backspace, START=Enter");
   Serial.println(webReady ? "Wi-Fi: SNES-Monitor / http://192.168.4.1/ (max 2 devices)"
                           : "Wi-Fi / web monitor initialization failed");
 }
