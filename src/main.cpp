@@ -2,6 +2,9 @@
 #include <M5Unified.h>
 #include <USB.h>
 #include <USBHIDKeyboard.h>
+#include <atomic>
+#include <tusb.h>
+#include "usb_keyboard_state.h"
 #include "web_monitor.h"
 
 namespace {
@@ -11,28 +14,6 @@ constexpr uint8_t kDataPin = 7;   // Red; white = 3V3_L2, brown = GND
 constexpr uint32_t kPollIntervalMs = 10;
 constexpr uint32_t kHeartbeatMs = 2000;
 constexpr uint16_t kButtonMask = 0x0FFF;
-
-struct HidKeyMapping {
-  uint8_t buttonBit;
-  uint8_t key;
-};
-
-// mGBA defaults: arrows = D-pad, Z = B, X = A, Backspace = SELECT,
-// Enter = START. Map SNES X/Y/L/R to S/A/Q/W in the emulator settings.
-constexpr HidKeyMapping kHidKeyMappings[] = {
-    {0, 'z'},
-    {1, 'a'},
-    {2, KEY_BACKSPACE},
-    {3, KEY_RETURN},
-    {4, KEY_UP_ARROW},
-    {5, KEY_DOWN_ARROW},
-    {6, KEY_LEFT_ARROW},
-    {7, KEY_RIGHT_ARROW},
-    {8, 'x'},
-    {9, 's'},
-    {10, 'q'},
-    {11, 'w'},
-};
 
 // SNES serial order. A low DATA bit means the button is pressed.
 constexpr const char* kButtonNames[] = {
@@ -47,20 +28,32 @@ M5Canvas controllerCanvas(&M5.Display);
 bool canvasReady = false;
 bool webReady = false;
 USBHIDKeyboard usbKeyboard;
+USBHID usbHid;
+UsbKeyboard::State usbKeyboardState;
+std::atomic<uint32_t> usbSession{0};
 
-void updateUsbKeyboard(uint16_t before, uint16_t after) {
-  const uint16_t changed = before ^ after;
-  for (const auto& mapping : kHidKeyMappings) {
-    const uint16_t mask = static_cast<uint16_t>(1U << mapping.buttonBit);
-    if ((changed & mask) == 0) {
-      continue;
-    }
-    if (after & mask) {
-      usbKeyboard.press(mapping.key);
-    } else {
-      usbKeyboard.release(mapping.key);
-    }
+void onUsbEvent(void*, esp_event_base_t base, int32_t event, void*) {
+  if (base == ARDUINO_USB_EVENTS &&
+      (event == ARDUINO_USB_STARTED_EVENT ||
+       event == ARDUINO_USB_STOPPED_EVENT ||
+       event == ARDUINO_USB_SUSPEND_EVENT ||
+       event == ARDUINO_USB_RESUME_EVENT)) {
+    // The USB event task only marks a new session. All HID sends stay on
+    // the input task, including when disconnect/reconnect occurs between polls.
+    usbSession.fetch_add(1, std::memory_order_relaxed);
   }
+}
+
+void updateUsbKeyboard(uint16_t pressed) {
+  const uint32_t session = usbSession.load(std::memory_order_relaxed);
+  const bool active = tud_mounted() && !tud_suspended();
+  usbKeyboardState.update(pressed, session, active,
+      [](const UsbKeyboard::Report& report) {
+        // A busy endpoint is retried on the next poll. Bound the transfer wait
+        // to 5ms so an unresponsive host cannot stall input for 100ms per key.
+        return usbHid.ready() && usbHid.SendReport(
+            HID_REPORT_ID_KEYBOARD, &report, sizeof(report), 5);
+      });
 }
 
 uint16_t readController() {
@@ -180,6 +173,7 @@ void printChanges(uint16_t before, uint16_t after) {
 }  // namespace
 
 void setup() {
+  USB.onEvent(onUsbEvent);
   usbKeyboard.begin();
   USB.begin();
 
@@ -225,8 +219,8 @@ void loop() {
   if (now - lastPollMs >= kPollIntervalMs) {
     lastPollMs = now;
     const uint16_t pressed = readController();
+    updateUsbKeyboard(pressed);
     if (firstSample || pressed != previousButtons) {
-      updateUsbKeyboard(firstSample ? 0 : previousButtons, pressed);
       WebMonitor::publish(pressed);
       drawButtons(pressed);
       printChanges(previousButtons, pressed);
