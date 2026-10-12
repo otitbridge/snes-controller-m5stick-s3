@@ -6,11 +6,19 @@
 
 ## 動作映像
 
+### Webモニター
+
 [![SNESコントローラー、M5StickS3の液晶、スマートフォンのWebモニターで左キーの押下状態を表示](docs/images/snes-controller-web-monitor.png)](https://x.com/ot_it_bridge/status/2106715352856203522)
 
 実機コントローラーの操作を、M5StickS3の液晶とスマートフォンのWebモニターに表示している様子です。
 
 [実機での動作映像を見る（X：@ot_it_bridge）](https://x.com/ot_it_bridge/status/2106715352856203522)
+
+### BLE接続
+
+BLE接続時の動作映像です。
+
+[BLE接続の動作映像を見る（X：@ot_it_bridge）](https://x.com/ot_it_bridge/status/2109648035760550369?s=20)
 
 ## 機能
 
